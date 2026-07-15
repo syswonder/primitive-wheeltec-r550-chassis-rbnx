@@ -12,7 +12,7 @@ package:
     - primitive
     - robonix
   maintainers:
-    - Your Name <you@example.com>
+    - Xiangrui Cheng <ccc_7020@qq.com>
   license: Apache-2.0
 
 capabilities:

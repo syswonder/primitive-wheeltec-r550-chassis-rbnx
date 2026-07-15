@@ -1,0 +1,26 @@
+manifestVersion: 1
+
+build: bash scripts/build.sh
+
+start: bash scripts/start.sh
+
+package:
+  name: "robonix.primitive.wheeltec.r550_minitank.chassis"
+  version: 0.1.0
+  description: wheeltec r550_minitank chassis driver wrapper.
+  tags:
+    - primitive
+    - robonix
+  maintainers:
+    - Xiangrui Cheng <ccc_7020@qq.com>
+  license: Apache-2.0
+
+capabilities:
+  - name: robonix/primitive/chassis/driver
+  - name: robonix/primitive/chassis/move
+  - name: robonix/primitive/chassis/twist_in
+  - name: robonix/primitive/chassis/odom
+  - name: robonix/primitive/imu/driver
+  - name: robonix/primitive/imu/imu
+
+depends: []
