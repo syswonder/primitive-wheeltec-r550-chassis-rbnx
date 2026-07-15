@@ -1,0 +1,20 @@
+manifestVersion: 1
+
+build: bash scripts/build.sh
+
+start: bash scripts/start.sh
+
+package:
+  name: "robonix.primitive.wheeltec.r550_minitank.robot_description"
+  version: 0.1.0
+  description: wheeltec r550_minitank URDF robot_description (mini_tank model).
+  tags:
+    - primitive
+    - robonix
+  maintainers:
+    - Your Name <you@example.com>
+  license: Apache-2.0
+
+capabilities:
+  - name: robonix/primitive/robot_description/driver
+
