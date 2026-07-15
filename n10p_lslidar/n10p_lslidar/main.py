@@ -240,11 +240,11 @@ def init(cfg: dict):
         return Err(f"spawn static_transform_publisher failed: {e}")
 
     cap.declare_ros2_topic(
-        "robonix/primitive/lidar/lidar2d",
+        "robonix/primitive/lidar/lidar",
         topic=scan_topic,
         qos="reliable",
     )
-    log.info("init complete: lidar2d=%s", scan_topic)
+    log.info("init complete: lidar=%s", scan_topic)
     return Ok()
 
 

@@ -1,0 +1,59 @@
+# Runtime config accepted by the R550 mini_tank chassis primitive.
+#
+# This file documents the mapping passed as this package's `config:` value in
+# robonix_manifest.yaml. It is documentation for deployers and tooling; the
+# provider continues to parse and validate the values in its own code.
+
+config:
+  # string, default: /odom_combined.
+  # Final odometry topic declared as robonix/primitive/chassis/odom.
+  # Default is the EKF-fused output. If enable_ekf is false, set this to
+  # /odom (raw wheel odometry from base_serial).
+  odom_topic_name: /odom_combined
+
+  # string, default: /cmd_vel.
+  # Incoming twist command topic declared as robonix/primitive/chassis/twist_in.
+  # Navigation stacks publish velocity commands here; base_serial forwards
+  # them to the MCU.
+  cmd_vel_topic: /cmd_vel
+
+  # string, default: /imu_data.
+  # IMU topic declared as robonix/primitive/imu/imu.
+  # Default is the Madgwick-filtered output from imu_filter_madgwick.
+  # If enable_imu_filter is false, set this to /imu/data_raw.
+  imu_topic: /imu_data
+
+  # float, metres, default: 0.03715.
+  # Z translation from base_footprint to base_link (mini_tank chassis).
+  # Known alternatives from wheeltec_robot.launch.py:
+  #   mini_diff: 0.01563  mini_akm: 0.0216   mini_mec:  0.07258
+  #   mini_4wd:  0.0682   mini_omni: 0.06542
+  # Set to 0.0 when the URDF or soma already provides this edge.
+  base_to_link_z: 0.03715
+
+  # bool, default: true.
+  # Whether to spawn imu_filter_madgwick_node.
+  # When enabled, /imu/data_raw is filtered through a Madgwick orientation
+  # estimator and published as /imu_data. Disable if the IMU already outputs
+  # orientation or another node handles filtering.
+  enable_imu_filter: true
+
+  # bool, default: true.
+  # Whether to spawn joint_state_publisher.
+  # The mini_tank URDF has only FIXED joints — this publishes static
+  # all-zeros joint states so robot_state_publisher can build the TF tree.
+  # Disable only if another package already publishes /joint_states.
+  enable_joint_state_pub: true
+
+  # bool, default: true.
+  # Whether to spawn wheeltec_ekf.launch.py (robot_localization EKF).
+  # The EKF fuses /odom (wheel) + /imu_data (IMU) → /odom_combined.
+  # Disable if using a different localization pipeline or running without IMU.
+  enable_ekf: true
+
+  # float, seconds, default: 30.0.
+  # Maximum wait for /odom_combined and /imu_data after spawning all
+  # subprocesses. The EKF needs time to converge; increase if the chassis
+  # takes unusually long to produce odometry.
+  sentinel_timeout_s: 30.0
+
