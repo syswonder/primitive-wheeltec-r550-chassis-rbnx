@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MulanPSL-2.0
-"""lslidar_n10p_rbnx — LSLIDAR N10P lidar primitive (capability_id=lslidar_n10p).
+"""n10p_lslidar_rbnx — LSLIDAR N10P lidar primitive (capability_id=n10p_lslidar).
 
 Owns `robonix/primitive/lidar/*`. The N10P publishes `/scan` (LaserScan)
 via the wheeltec_lidar launch file.
@@ -44,7 +44,7 @@ logging.basicConfig(
 )
 log = logging.getLogger("lslidar")
 
-cap = Primitive(id="lslidar_n10p", namespace="robonix/primitive/lidar")
+cap = Primitive(id="n10p_lslidar", namespace="robonix/primitive/lidar")
 
 
 def _pump_output(stream, tag: str) -> None:

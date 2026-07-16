@@ -1,0 +1,60 @@
+# Orbbec Astra S RGB-D camera primitive for Wheeltec R550.
+#
+# Wraps the upstream `turn_on_wheeltec_robot` wheeltec_camera.launch.py.
+# Atlas-registers the streams it produces under generic
+# `primitive/camera/*` contracts. Consumers (mapping_rbnx, scene, any
+# vision skill) discover the topic names via atlas — no hardcoded
+# `/camera/...` paths on the consumer side.
+#
+# Lifecycle: start.sh launches the atlas bridge ONLY (no ROS spawn).
+# `rbnx boot` then calls `Driver(CMD_INIT, config_json)` on the
+# primitive/camera/driver gRPC interface — that handler parses config,
+# starts wheeltec_camera.launch.py, waits for the first RGB frame,
+# and only THEN declares rgb / depth / intrinsics / extrinsics on atlas.
+#
+# Capability surface (mode = abstract pattern, transport = wire):
+#   primitive/camera/driver         mode=rpc        transport=gRPC
+#   primitive/camera/rgb            mode=topic_out  transport=ROS2  sensor_msgs/Image
+#   primitive/camera/depth          mode=topic_out  transport=ROS2  sensor_msgs/Image
+#   primitive/camera/intrinsics     mode=topic_out  transport=ROS2  sensor_msgs/CameraInfo
+#   primitive/camera/extrinsics     mode=topic_out  transport=ROS2  geometry_msgs/TransformStamped
+#   primitive/camera/snapshot       mode=rpc        transport=MCP   one-shot RGB JPEG
+#   primitive/camera/depth_snapshot mode=rpc        transport=MCP   one-shot depth JPEG
+#
+# Config (passed via `Driver(CMD_INIT, config_json)`):
+#   color_topic          default "/camera/color/image_raw"
+#   depth_topic          default "/camera/depth/image_raw"
+#   intrinsics_topic    default "/camera/color/camera_info"
+#   extrinsics_topic     default "/camera/extrinsics"
+#   base_frame           default "base_link"
+#   cam_frame            default "camera_link"
+#   sentinel_timeout_s   default 60.0
+manifestVersion: 1
+
+package:
+  name: robonix.primitive.wheeltec.r550_minitank.astra_s_camera
+  version: 0.1.0
+  description: Orbbec Astra S RGB-D depth camera primitive for Wheeltec R550.
+  tags:
+    - primitive
+    - camera
+    - astra
+    - rgbd
+    - ros2
+  maintainers:
+    - Xiangrui Cheng <ccc_7020@qq.com>
+  license: Apache-2.0
+
+capability_id: astra_s_camera
+
+build: bash scripts/build.sh
+start: bash scripts/start.sh
+
+capabilities:
+  - name: robonix/primitive/camera/driver
+  - name: robonix/primitive/camera/rgb
+  - name: robonix/primitive/camera/depth
+  - name: robonix/primitive/camera/intrinsics
+  - name: robonix/primitive/camera/extrinsics
+  - name: robonix/primitive/camera/snapshot
+  - name: robonix/primitive/camera/depth_snapshot

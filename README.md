@@ -1,121 +1,252 @@
-# Wheeltec R550 mini_tank — Robonix Primitives
+# Wheeltec R550 mini\_tank — Robonix Deploy
 
-三个原语分别管理机器人模型、底盘驱动和激光雷达，按依赖顺序启动。
+A full Robonix deployment for the **Wheeltec R550 mini\_tank**: 2D SLAM mapping
+with N10P LiDAR + Orbbec Astra S RGB-D camera, rtabmap, Nav2 navigation, and VLM
+pilot. All components boot via `rbnx boot` from a single `robonix_manifest.yaml`.
 
-## 原语概览
+## Package inventory
 
-| 原语 | 命名空间 | 启动内容 |
-|---|---|---|
-| `robot_description` | `robonix/primitive/robot_description` | URDF 模型发布 |
-| `chassis` | `robonix/primitive/chassis` | 底盘驱动 + IMU + EKF |
-| `lidar` | `robonix/primitive/lidar` | LSLIDAR N10P 激光雷达 |
+| Type | Name | Path | Provider ID | Summary |
+|------|------|------|-------------|---------|
+| **primitive** | robot\_desc | `./primitive-wheeltec-r550-chassis-rbnx/robot_description` | `robot_description` | URDF model + robot\_state\_publisher |
+| **primitive** | chassis | `./primitive-wheeltec-r550-chassis-rbnx/r550_chassis` | `r550_chassis` | Chassis driver + IMU + EKF |
+| **primitive** | lidar | `./primitive-wheeltec-r550-chassis-rbnx/n10p_lslidar` | `n10p_lslidar` | LSLIDAR N10P 2D laser scanner |
+| **primitive** | camera | `./astra_s_camera` | `astra_s_camera` | Orbbec Astra S RGB-D depth camera |
+| **service** | mapping | `./service-map-rbnx` | `mapping` | rtabmap SLAM — occupancy grid, point cloud, pose, odom |
+| **service** | nav2 | `./service-navigation-rbnx` | `nav2` | Nav2 goal-based navigation |
+| **system** | scene | `package_manifest.jetson-native.yaml` | `scene` | Semantic scene understanding (pins camera) |
 
-## 依赖关系
+### System layer
+
+| Component | Port | Role |
+|-----------|------|------|
+| atlas | `50051` | Capability registry |
+| executor | `50061` | Tool-call dispatcher |
+| pilot | `50071` | VLM brain (OpenAI-format upstream) |
+| liaison | `50081` | External API bridge |
+| soma | `50091` | Robot body description + health |
+| vitals | `50093` | Dashboard / system monitoring |
+| scene | `50107` | Semantic scene graph (camera consumer) |
+
+## Dependency graph
 
 ```
-robot_description          ← 无依赖，必须最先启动
-    │
+robot_description                     ← no deps, must boot first
     │  /robot_description (URDF)
     ▼
-chassis                    ← 需要 URDF 才能运行 joint_state_publisher
-    │                        发布的 TF: base_footprint → base_link
-    │                                    base_footprint → gyro_link
-    │  /odom_combined
-    │  /imu_data
-    ▼
-lidar                      ← 需要 base_link 帧（chassis 提供）
+chassis                               ← needs URDF for joint_state_publisher
+    │  publishes: base_footprint → base_link, base_footprint → gyro_link
+    │  /odom_combined  /imu_data  /cmd_vel
+    │
+    ├──► lidar                        ← needs base_link TF
+    │       /scan (LaserScan, frame_id=laser)
+    │
+    └──► camera                       ← needs camera_link TF from URDF
+            /camera/color/image_raw   /camera/depth/image_raw
+            /camera/color/camera_info
+            + snapshot MCP tools
+            │
+            ├──► mapping              ← lidar2d (n10p_lslidar) + odom (r550_chassis)
+            │       /map (OccupancyGrid)  /rtabmap/cloud_map  /rtabmap/odom
+            │
+            ├──► nav2                 ← map (mapping) + odom (r550_chassis) + scan (n10p_lslidar)
+            │       service/navigation/{navigate, status, cancel}
+            │
+            └──► scene                ← camera (astra_s_camera)
+                    system/scene/{list_objects, goal_near}
 ```
 
-## 各原语详细说明
+## Primitives
 
-### 1. robot_description — URDF 模型
+### 1. robot\_description — URDF model
 
-**启动：** `ros2 launch turn_on_wheeltec_robot robot_mode_description_minibot.launch.py mini_tank:=true`
+**Launch:** `ros2 launch turn_on_wheeltec_robot robot_mode_description_minibot.launch.py mini_tank:=true`
 
-- 发布 `/robot_description`（URDF 参数，内部 RPC，不对外暴露 ROS2 topic）
-- 启动 `robot_state_publisher`，配合 `joint_state_publisher` 构建完整 TF 树
-- 通信方式：RPC，无 `declare_ros2_topic`
+| Capability | Transport | Topic / Notes |
+|------------|-----------|---------------|
+| `robonix/primitive/robot_description/driver` | gRPC | Lifecycle gate |
 
-### 2. chassis — 底盘 + IMU
+Publishes `/robot_description` (TRANSIENT\_LOCAL) and spawns
+`robot_state_publisher` so the full TF tree is available to downstream consumers.
 
-**启动：**
+### 2. chassis — chassis driver + IMU + EKF
 
-| 组件 | 命令 | 功能 |
-|---|---|---|
-| base_serial | `base_serial.launch.py` | 底盘 MCU 串口驱动 |
-| base_to_link | `static_transform_publisher` | `base_footprint` → `base_link` (z=0.03715, mini_tank) |
-| base_to_gyro | `static_transform_publisher` | `base_footprint` → `gyro_link` |
-| joint_state_publisher | `joint_state_publisher` | 发布 fixed 关节状态（mini_tank 无活动关节） |
-| imu_filter_madgwick | `imu_filter_madgwick_node` | `/imu/data_raw` → `/imu_data` (Madgwick 滤波) |
-| wheeltec_ekf | `wheeltec_ekf.launch.py` | 融合 `/odom` + `/imu_data` → `/odom_combined` |
+**Launch:** `base_serial.launch.py` + `wheeltec_ekf.launch.py`
 
-**对外暴露：**
+| Capability | Transport | Topic | QoS |
+|------------|-----------|-------|-----|
+| `robonix/primitive/chassis/driver` | gRPC | — | — |
+| `robonix/primitive/chassis/odom` | topic\_out | `/odom_combined` (EKF-fused) | reliable |
+| `robonix/primitive/chassis/move` | gRPC | — | — |
+| `robonix/primitive/chassis/twist_in` | topic\_in | `/cmd_vel` | reliable |
+| `robonix/primitive/imu/driver` | gRPC | — | — |
+| `robonix/primitive/imu/imu` | topic\_out | `/imu_data` (Madgwick-filtered) | reliable |
 
-| capability | 话题 | 方向 | QoS |
-|---|---|---|---|
-| `chassis/odom` | `/odom_combined` | out | reliable |
-| `chassis/twist_in` | `/cmd_vel` | in | reliable |
-| `imu/imu` | `/imu_data` | out | reliable |
-| `chassis/move` | — | gRPC | — |
+TF published: `base_footprint → base_link` (z=0.03715), `base_footprint → gyro_link`.
 
-**话题数据流（内部+外部）：**
+Data flow (internal + external):
 
 ```
 /dev/wheeltec_controller
         │
   base_serial.launch.py
         │
-        ├── /odom ──────────────────────────┐
-        │                                    │
-        └── /imu/data_raw                    │
-                │                            │
-          imu_filter_madgwick                │
-                │                            │
-          /imu_data ─────────────────────────┤
-                │                            │
-                │                      wheeltec_ekf
-                │                            │
-                ▼                            ▼
-    (对外) imu/imu               /odom_combined
-                                        │
-                                  (对外) chassis/odom
+        ├── /odom ──────────────────────┐
+        │                               │
+        └── /imu/data_raw               │
+                │                       │
+          imu_filter_madgwick           │
+                │                       │
+          /imu_data ────────────────────┤
+                │                       │
+                │                 wheeltec_ekf
+                │                       │
+                ▼                       ▼
+      (external) imu/imu    /odom_combined
+                                   │
+                             (external) chassis/odom
 ```
 
 ### 3. lidar — LSLIDAR N10P
 
-**启动：** `ros2 launch turn_on_wheeltec_robot wheeltec_lidar.launch.py`
+**Launch:** `ros2 launch turn_on_wheeltec_robot wheeltec_lidar.launch.py`
 
-- 发布 `/scan`（`sensor_msgs/msg/LaserScan`），QoS RELIABLE，frame_id = `laser`
-- 可选 extrinsics → 自动发布 `parent_frame → laser` 的 static TF
-- 由于 `wheeltec_lidar.launch.py` 内无额外 TF publisher，若需 `base_link → laser` 变换，在 config 中配置 `extrinsics` 即可
+| Capability | Transport | Topic | QoS |
+|------------|-----------|-------|-----|
+| `robonix/primitive/lidar/driver` | gRPC | — | — |
+| `robonix/primitive/lidar/lidar` | topic\_out | `/scan` | reliable |
 
-**对外暴露：**
+Publishes `sensor_msgs/LaserScan` with `frame_id=laser`. The
+`base_link → laser` TF edge comes from the URDF via `robot_state_publisher`.
 
-| capability | 话题 | 方向 | QoS |
-|---|---|---|---|
-| `lidar/lidar2d` | `/scan` | out | reliable |
+**Self-heal:** 3 retry attempts if no LaserScan appears within the sentinel
+timeout — recovers from N10P stream-start failures without a manual power cycle.
 
-## 启动顺序
+### 4. camera — Orbbec Astra S RGB-D
 
-在 `robonix_manifest.yaml` 中按依赖顺序排列：
+**Launch:** `ros2 launch turn_on_wheeltec_robot wheeltec_camera.launch.py`
 
-```yaml
-primitives:
-  - robot_description   # 1st — 提供 URDF
-  - chassis             # 2nd — 提供 TF + odom + imu
-  - lidar               # 3rd — 提供 laser scan
-```
+| Capability | Transport | Topic | QoS |
+|------------|-----------|-------|-----|
+| `robonix/primitive/camera/driver` | gRPC | — | — |
+| `robonix/primitive/camera/rgb` | topic\_out | `/camera/color/image_raw` | reliable |
+| `robonix/primitive/camera/depth` | topic\_out | `/camera/depth/image_raw` | reliable |
+| `robonix/primitive/camera/intrinsics` | topic\_out | `/camera/color/camera_info` | reliable |
+| `robonix/primitive/camera/snapshot` | MCP | — | one-shot RGB JPEG |
+| `robonix/primitive/camera/depth_snapshot` | MCP | — | one-shot depth JPEG |
+| `robonix/primitive/camera/extrinsics` | — | — | declared only (URDF-sourced) |
 
-## TF 树（完整运行时）
+The camera subscribes to RGB and depth topics with permanent subscriptions
+(no transient ROS nodes at call time). snapshot / depth\_snapshot return the
+latest cached frame as a JPEG-encoded `sensor_msgs/Image`.
+
+Intrinsics binds directly to the Astra S native CameraInfo topic — no relay
+needed. Extrinsics are declared in `package_manifest.yaml` but not implemented:
+the URDF + `robot_state_publisher` already provide the `base_link → camera_link`
+TF edge.
+
+**Astra S native topics (published by wheeltec\_camera.launch.py):**
+
+| Topic | Type |
+|-------|------|
+| `/camera/color/image_raw` | sensor\_msgs/Image |
+| `/camera/color/camera_info` | sensor\_msgs/CameraInfo |
+| `/camera/depth/image_raw` | sensor\_msgs/Image |
+| `/camera/depth/camera_info` | sensor\_msgs/CameraInfo |
+| `/camera/depth/points` | sensor\_msgs/PointCloud2 |
+| `/camera/ir/image_raw` | sensor\_msgs/Image |
+| `/camera/ir/camera_info` | sensor\_msgs/CameraInfo |
+
+## Services
+
+### mapping — rtabmap SLAM
+
+| Capability | Transport | Topic / Notes |
+|------------|-----------|---------------|
+| `robonix/service/map/driver` | gRPC | Lifecycle |
+| `robonix/service/map/occupancy_grid` | topic\_out | `/map` (OccupancyGrid) |
+| `robonix/service/map/pointcloud` | topic\_out | `/rtabmap/cloud_map` |
+| `robonix/service/map/pose` | topic\_out | `/robonix/map/pose` |
+| `robonix/service/map/odom` | topic\_out | `/rtabmap/odom` |
+
+Sensor providers: `lidar2d → n10p_lslidar`, `odom → r550_chassis`.
+Web UI at `http://<robot-ip>:8091`.
+
+### nav2 — goal-based navigation
+
+| Capability | Transport | Topic / Notes |
+|------------|-----------|---------------|
+| `robonix/service/navigation/driver` | gRPC | Lifecycle |
+| `robonix/service/navigation/navigate` | gRPC + MCP | Start a NavigateToPose run |
+| `robonix/service/navigation/navigate/status` | gRPC + MCP | Poll run state |
+| `robonix/service/navigation/navigate/cancel` | gRPC + MCP | Cancel active run |
+
+Provider pins: `map → mapping`, `odom → r550_chassis`, `scan → n10p_lslidar`.
+At `Driver(CMD_INIT)`: resolves Atlas providers, materializes the deploy-owned
+Nav2 YAML, spawns nav2\_bringup, waits for `navigate_to_pose` action server,
+then declares capabilities. Missing required providers return `deferred`.
+
+The deploy-owned `config/nav2_params.yaml` must be created next to
+`robonix_manifest.yaml` — copy and tune
+`service-navigation-rbnx/config/nav2_params.example.yml`.
+
+## TF tree (full runtime)
 
 ```
 base_footprint
-    ├── base_link                    (chassis: base_to_link)
-    │       └── laser                (lidar: extrinsics, 可选)
-    └── gyro_link                    (chassis: base_to_gyro)
+    ├── base_link                          (chassis: base_to_link, z=0.03715)
+    │       ├── laser                      (URDF via robot_state_publisher)
+    │       └── camera_link                (URDF via robot_state_publisher)
+    └── gyro_link                          (chassis: base_to_gyro)
 ```
 
-- `base_footprint → base_link` 和 `base_footprint → gyro_link` 由 chassis 原语发布
-- `base_link → laser` 由 lidar 原语的 `extrinsics` 配置发布（可选，用于 mapping/nav2 等消费者）
-- URDF 中的 fixed 关节 TF 由 `robot_state_publisher` 根据 `/joint_states` 自动发布
+## Boot order
 
+```yaml
+system:    atlas → soma → executor → pilot → liaison → vitals → scene
+primitive: robot_desc → chassis → lidar → camera
+service:   mapping → nav2
+```
+
+Primitives boot in dependency order. Services use the Atlas defer-queue:
+nav2 waits for mapping, which waits for lidar + chassis.
+
+## Environment
+
+Propagated by `rbnx boot` from the `env:` block in `robonix_manifest.yaml`:
+
+| Variable | Used by | Notes |
+|----------|---------|-------|
+| `VLM_BASE_URL` | pilot | LLM upstream endpoint |
+| `VLM_API_KEY` | pilot | LLM API key |
+| `VLM_MODEL` | pilot | Model name |
+| `LOG` | all | Log level (default `INFO`) |
+| `ROS_DISTRO` | primitives | ROS 2 distro (default `humble`) |
+
+Pre-export these in your shell or replace `${VLM_*}` with literal values in the
+manifest.
+
+## Host prerequisites
+
+- ROS 2 Humble sourced at `/opt/ros/humble/setup.bash`
+- `turn_on_wheeltec_robot` workspace on the ROS package path
+- Nav2 packages (`ros-humble-nav2-bringup` + plugins)
+- `rbnx` CLI on PATH
+- Python 3.10+ with `numpy`, `PIL` (Pillow), `grpcio`
+
+## Quickstart
+
+```bash
+# 1. Build all packages
+rbnx build
+
+# 2. Boot the full stack
+rbnx boot
+
+# 3. Open the mapping web UI
+# http://<robot-ip>:8091
+```
+
+## License
+
+Apache-2.0 (matches robonix upstream).

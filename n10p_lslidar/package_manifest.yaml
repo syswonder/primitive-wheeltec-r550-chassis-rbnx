@@ -6,8 +6,8 @@ start: bash scripts/start.sh
 
 package:
   name: "robonix.primitive.n10p_lslidar"
-  version: 0.0.1
-  description: TODO: describe what this primitive package provides.
+  version: 0.1.0
+  description: N10P Lidar driver for 2D SLAM mapping and navigation.
   tags:
     - primitive
     - robonix
@@ -16,7 +16,7 @@ package:
   license: Apache-2.0
 
 capabilities:
--name: robinix/primitive/lidar/driver
--name: robinix/primitive/lidar/lidar
-
+  - name: robinix/primitive/lidar/driver
+  - name: robinix/primitive/lidar/lidar
+  - name: robinix/primitive/lidar/lidar_snapshot
 depends: []
