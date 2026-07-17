@@ -1,4 +1,4 @@
-# Wheeltec R550 mini\_tank — Robonix Deploy
+# Wheeltec R550 mini\_tank — Robonix Deploy Primitives
 
 A full Robonix deployment for the **Wheeltec R550 mini\_tank**: 2D SLAM mapping
 with N10P LiDAR + Orbbec Astra S RGB-D camera, rtabmap, Nav2 navigation, and VLM
