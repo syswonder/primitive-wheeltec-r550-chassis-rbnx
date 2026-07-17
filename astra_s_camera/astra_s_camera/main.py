@@ -3,8 +3,9 @@
 """astra_s_camera_rbnx — Orbbec Astra S RGB-D camera primitive
 (capability_id=astra_s_camera).
 
-Owns `robonix/primitive/camera/*`. Uses the wheeltec_camera.launch.py
-from turn_on_wheeltec_robot (no source build needed).
+Owns `robonix/primitive/camera/*`. Directly launches the astra_camera
+driver via ros2 launch astra_camera astra.launch.xml (the same
+underlying include that wheeltec_camera.launch.py uses).
 
 Capability surface:
   primitive/camera/driver         rpc gRPC (lifecycle)
@@ -16,7 +17,7 @@ Capability surface:
   primitive/camera/extrinsics     (declared in package_manifest only; not implemented)
 
 Lifecycle:
-    on_init      — spawn wheeltec_camera.launch.py
+    on_init      — ros2 launch astra_camera astra.launch.xml
                    → subscribe rgb + depth →
                    wait for first RGB frame →
                    declare rgb/depth/intrinsics topic_out
@@ -28,8 +29,8 @@ Config (from manifest):
     depth_topic          default "/camera/depth/image_raw"
     intrinsics_topic     default "/camera/color/camera_info"
     cam_frame            default "camera_link"
-    launch_package       default "turn_on_wheeltec_robot"
-    launch_file          default "wheeltec_camera.launch.py"
+    launch_package       default "astra_camera"
+    launch_file          default "astra.launch.xml"
     sentinel_timeout_s   default 60.0
 """
 from __future__ import annotations
@@ -69,11 +70,28 @@ _rgb_received = threading.Event()
 
 # ── camera subprocess management ──────────────────────────────────────────
 def _spawn_camera(cfg: dict) -> None:
-    """Launch ros2 launch <launch_package> <launch_file>."""
+    """Launch ros2 launch <launch_package> <launch_file>.
+
+    Before launching, aggressively clean up any leftover camera processes
+    that might still hold the USB device from a previous run — this is the
+    most common failure mode: a prior shutdown didn't fully tear down the
+    node tree, so the Astra S stays "Resource busy".
+    """
     global _camera_proc
 
-    launch_pkg = str(cfg.get("launch_package", "turn_on_wheeltec_robot"))
-    launch_file = str(cfg.get("launch_file", "wheeltec_camera.launch.py"))
+    launch_pkg = str(cfg.get("launch_package", "astra_camera"))
+    launch_file = str(cfg.get("launch_file", "astra.launch.xml"))
+
+    # ── pre-launch cleanup: nuke any leftover camera processes ──────────
+    for target in ("astra_camera_node", "ros2 launch astra_camera"):
+        result = subprocess.run(
+            ["pkill", "-f", target],
+            check=False,
+        )
+        log.debug("pre-launch pkill -f %s → rc=%d", target, result.returncode)
+
+    # Brief settle so the kernel can release the USB interface.
+    time.sleep(0.5)
 
     log_path = _pkg_root / "rbnx-build" / "data" / "astra_camera.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -87,20 +105,49 @@ def _spawn_camera(cfg: dict) -> None:
 
 
 def _kill_camera() -> None:
+    """Tear down the camera subprocess tree, including orphaned children.
+
+    ros2 launch can spawn the actual astra_camera_node in a different
+    process group than the launch parent, so killpg alone is not enough —
+    we also use pkill as a safety net to catch any stragglers that would
+    hold the USB device and cause "Resource busy" on the next start.
+    """
+    global _camera_proc
+
     p = _camera_proc
-    if p is None or p.poll() is not None:
+    if p is None:
         return
+
+    # 1) Gentle shutdown: ROS nodes handle SIGINT cleanly (close USB, etc.).
+    if p.poll() is None:
+        try:
+            os.killpg(os.getpgid(p.pid), signal.SIGINT)
+        except ProcessLookupError:
+            pass
+
+    # 2) Wait a few seconds for graceful teardown.
     try:
-        os.killpg(os.getpgid(p.pid), signal.SIGTERM)
-    except ProcessLookupError:
-        return
-    try:
-        p.wait(timeout=5.0)
+        p.wait(timeout=3.0)
     except subprocess.TimeoutExpired:
+        # 3) Force-kill anything still alive in the process group.
         try:
             os.killpg(os.getpgid(p.pid), signal.SIGKILL)
         except ProcessLookupError:
             pass
+        try:
+            p.wait(timeout=2.0)
+        except subprocess.TimeoutExpired:
+            log.warning("camera subprocess did not die after SIGKILL")
+
+    # 4) Belt-and-suspenders: pkill any orphaned camera nodes that escaped
+    #    the process group (classic ros2 launch behaviour).
+    for target in ("astra_camera_node", "ros2 launch astra_camera"):
+        subprocess.run(
+            ["pkill", "-f", target],
+            check=False,
+        )
+
+    _camera_proc = None
 
 
 # ── image conversion ─────────────────────────────────────────────────────────

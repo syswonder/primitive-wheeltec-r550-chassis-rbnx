@@ -17,11 +17,11 @@ config:
   # them to the MCU.
   cmd_vel_topic: /cmd_vel
 
-  # string, default: /imu_data.
+  # string, default: /imu/data.
   # IMU topic declared as robonix/primitive/imu/imu.
   # Default is the Madgwick-filtered output from imu_filter_madgwick.
   # If enable_imu_filter is false, set this to /imu/data_raw.
-  imu_topic: /imu_data
+  imu_topic: /imu/data
 
   # float, metres, default: 0.03715.
   # Z translation from base_footprint to base_link (mini_tank chassis).
@@ -56,4 +56,6 @@ config:
   # subprocesses. The EKF needs time to converge; increase if the chassis
   # takes unusually long to produce odometry.
   sentinel_timeout_s: 30.0
+
+  imu_filter_config: imu.yaml
 

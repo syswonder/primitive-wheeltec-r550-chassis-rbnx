@@ -20,7 +20,6 @@ capabilities:
   - name: robonix/primitive/chassis/move
   - name: robonix/primitive/chassis/twist_in
   - name: robonix/primitive/chassis/odom
-  - name: robonix/primitive/imu/driver
   - name: robonix/primitive/imu/imu
 
 depends: []

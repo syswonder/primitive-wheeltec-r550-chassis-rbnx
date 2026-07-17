@@ -1,0 +1,9 @@
+rbnx-build/
+rbnx-boot/
+logs/
+.vscode/
+.idea/
+*.swp
+__pycache__/
+*.pyc
+.venv/

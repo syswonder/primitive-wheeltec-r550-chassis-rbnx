@@ -27,12 +27,12 @@ Lifecycle:
         - spawn base→link & base→gyro static TFs
         - spawn joint_state_publisher (fixed joints only)
         - spawn imu_filter_madgwick
-        - spawn wheeltec_ekf (fuses /odom + /imu_data → /odom_combined)
+        - spawn wheeltec_ekf (fuses /odom + /imu/data_raw → /odom_combined)
         - wait for first /odom_combined message
         - declare chassis/odom (→ /odom_combined) and chassis/twist_in
 
     on_init (imu):
-        - wait for first /imu_data message (filtered IMU)
+        - wait for first /imu/data message (filtered IMU)
         - declare imu/imu
 
     on_shutdown:
@@ -41,7 +41,7 @@ Lifecycle:
 Config:
     odom_topic_name         default "/odom_combined"    (wheeltec_ekf fused output)
     cmd_vel_topic           default "/cmd_vel"           (chassis twist command)
-    imu_topic               default "/imu_data"          (imu_filter_madgwick output)
+    imu_topic               default "/imu/data"          (imu_filter_madgwick output)
     base_to_link_z          default 0.03715              (mini_tank z offset)
     enable_imu_filter       default true
     enable_joint_state_pub  default true
@@ -69,7 +69,6 @@ logging.basicConfig(
 log = logging.getLogger("r550_chassis")
 
 provider = Primitive(id="r550_chassis", namespace="robonix/primitive/chassis")
-imu_provider = Primitive(id="r550_imu", namespace="robonix/primitive/imu")
 
 # ── subprocess handles ───────────────────────────────────────────────────
 _r550_proc: subprocess.Popen | None = None
@@ -219,7 +218,7 @@ def _spawn_imu_filter(cfg: dict) -> None:
         _imu_filter_proc = subprocess.Popen(
             [
                 "ros2", "run", "imu_filter_madgwick", "imu_filter_madgwick_node",
-                "--ros-args", "-p", f"config_file:={imu_config_path}",
+                "--ros-args", "--params-file", f"{imu_config_path}",
             ],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -243,7 +242,7 @@ def _spawn_imu_filter(cfg: dict) -> None:
 def _spawn_ekf(cfg: dict) -> None:
     """Spawn wheeltec_ekf (robot_localization EKF).
 
-    Fuses /odom (wheel odometry) + /imu_data (filtered IMU) → /odom_combined.
+    Fuses /odom (wheel odometry) + /imu/data_data (filtered IMU) → /odom_combined.
     This is the final, drift-corrected odometry that downstream consumers
     (nav2, mapping) should use.
     """
@@ -376,16 +375,11 @@ def _wait_for_odom(topic: str, timeout_s: float) -> bool:
 # NOTE: init_imu is deliberately a no-op.  IMU sentinel + declare are
 # handled inside the chassis init() to avoid a race: init_imu could fire
 # before init() has spawned imu_filter / base_serial, and then the wait
-# for /imu_data would never succeed (timeout → Err).
+# for /imu/data would never succeed (timeout → Err).
 #
 # Keeping the IMU primitive as a separate capability so the contract
 # surface stays clean (robonix/primitive/imu/imu), but all lifecycle
 # work happens in one ordered sequence.
-
-@imu_provider.on_init
-def init_imu(cfg: dict):
-    """No-op: IMU lifecycle is driven by chassis init()."""
-    return Ok()
 
 
 # ── lifecycle: chassis primitive ──────────────────────────────────────────
@@ -395,26 +389,26 @@ def init(cfg: dict):
     """REGISTERED → INACTIVE:
 
     1. Spawn all subprocesses in dependency order
-    2. Wait for /odom_combined (EKF) + /imu_data (filtered IMU)
+    2. Wait for /odom_combined (EKF) + /imu/data (filtered IMU)
     3. Declare chassis and IMU primitive interfaces
     """
     odom_topic = "/" + cfg.get("odom_topic_name", "/odom_combined").lstrip("/")
     cmd_vel_topic = "/" + cfg.get("cmd_vel_topic", "/cmd_vel").lstrip("/")
-    imu_topic = "/" + cfg.get("imu_topic", "/imu_data").lstrip("/")
+    imu_topic = "/" + cfg.get("imu_topic", "/imu/data").lstrip("/")
     timeout = float(cfg.get("sentinel_timeout_s", 30.0))
 
     # Spawn in dependency order:
     #   TFs (no deps)
     #   → joint_state_publisher (needs /robot_description from robot_desc primitive)
-    #   → imu_filter (needs /imu/data_raw from base_serial)
     #   → base_serial (publishes /odom + /imu/data_raw)
-    #   → ekf (needs /odom + /imu_data; publishes /odom_combined)
+    #   → imu_filter (needs /imu/data_raw from base_serial)
+    #   → ekf (needs /odom + /imu/data_raw; publishes /odom_combined)
     try:
+        _spawn_wheeltec(cfg)
         _spawn_base_to_link(cfg)
         _spawn_base_to_gyro(cfg)
         _spawn_joint_state_publisher(cfg)
         _spawn_imu_filter(cfg)
-        _spawn_wheeltec(cfg)
         _spawn_ekf(cfg)
     except Exception as e:
         _kill_all()
@@ -431,7 +425,7 @@ def init(cfg: dict):
 
     # Declare both primitive interfaces from the chassis init (single
     # ordered path — no race between IMU and chassis primitives).
-    imu_provider.declare_ros2_topic(
+    provider.declare_ros2_topic(
         "robonix/primitive/imu/imu",
         topic=imu_topic,
         qos="reliable",
@@ -457,12 +451,6 @@ def init(cfg: dict):
 
 # ── lifecycle: shutdown ───────────────────────────────────────────────────
 
-@imu_provider.on_shutdown
-def shutdown_imu():
-    log.info("stopping wheeltec R550 IMU (chassis driver will also be stopped)")
-    _kill_all()
-    return Ok()
-
 
 @provider.on_shutdown
 def shutdown():
@@ -473,7 +461,7 @@ def shutdown():
 
 # ── gRPC: chassis.move ────────────────────────────────────────────────────
 
-@provider.grpc("robonix.primitive.chassis.move")
+@provider.grpc("robonix/primitive/chassis/move")
 def move(req: "chassis_pb2.ExecuteMoveCommand_Request") -> "chassis_pb2.ExecuteMoveCommand_Response":
     """
     Primitive chassis motion command.

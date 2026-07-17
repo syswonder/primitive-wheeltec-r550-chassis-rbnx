@@ -25,14 +25,17 @@ config:
   # Camera optical TF frame. Must match the camera link name in the URDF.
   cam_frame: camera_link
 
-  # string, default: turn_on_wheeltec_robot.
-  # ROS2 package containing the camera launch file.
-  launch_package: turn_on_wheeltec_robot
+  # string, default: astra_camera.
+  # ROS2 package containing the camera driver launch file.
+  # The wheeltec_camera.launch.py wrapper simply includes astra.launch.xml
+  # from this package; we launch it directly to remove the indirection.
+  launch_package: astra_camera
 
-  # string, default: wheeltec_camera.launch.py.
-  # Launch file inside launch_package. Publishes color + depth + IR image
-  # streams and the depth point cloud from the Orbbec Astra S.
-  launch_file: wheeltec_camera.launch.py
+  # string, default: astra.launch.xml.
+  # Launch file inside launch_package. This is the Orbbec Astra S driver
+  # entry point that publishes color + depth + IR image streams and the
+  # depth point cloud.
+  launch_file: astra.launch.xml
 
   # float, seconds, default: 60.0.
   # Maximum wait for the first color Image on color_topic before failing init.
